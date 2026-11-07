@@ -1,0 +1,775 @@
+{
+  "info": {
+    "name": "MesaTech EP2 - Catalogo y Solicitudes (Postman)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Pruebas directas contra los microservicios (sin BFF ni React). Ejecutar A y B en orden; C para P3, P4, P5 y P7. Cambiar catalogoUrl/solicitudesUrl por las IPs de las EC2."
+  },
+  "item": [
+    {
+      "name": "A. Catálogo (publicador)",
+      "item": [
+        {
+          "name": "A1 Crear prioridad",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{catalogoUrl}}/api/v1/catalogo/prioridades",
+              "host": [
+                "{{catalogoUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "catalogo",
+                "prioridades"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombre\": \"ALTA-{{$timestamp}}\",\n  \"tiempoRespuestaHoras\": 4\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"201 Created\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"prioridadId\", pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A2 Crear categoría (P2: guarda en RDS + publica evento)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{catalogoUrl}}/api/v1/catalogo/categorias",
+              "host": [
+                "{{catalogoUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "catalogo",
+                "categorias"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombre\": \"Soporte-{{$timestamp}}\",\n  \"descripcion\": \"Categoria de prueba\",\n  \"prioridadId\": {{prioridadId}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Anota categoriaId y X-Event-Id: son la evidencia para relacionar HTTP, RDS Catalogo, mensaje y fila en RDS Solicitudes."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"201 Created (RDS guardado y publicacion confirmada por RabbitMQ)\", () => pm.response.to.have.status(201));",
+                  "pm.test(\"Trae cabecera X-Event-Id\", () => pm.response.to.have.header(\"X-Event-Id\"));",
+                  "pm.collectionVariables.set(\"categoriaId\", pm.response.json().id);",
+                  "pm.collectionVariables.set(\"eventId\", pm.response.headers.get(\"X-Event-Id\"));",
+                  "console.log(\"categoriaId=\" + pm.response.json().id + \" eventId=\" + pm.response.headers.get(\"X-Event-Id\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A3 Listar catálogo v1",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{catalogoUrl}}/api/v1/catalogo",
+              "host": [
+                "{{catalogoUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "catalogo"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 OK\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A4 Listar catálogo v2 (incluye prioridad en cada categoría)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{catalogoUrl}}/api/v2/catalogo",
+              "host": [
+                "{{catalogoUrl}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "catalogo"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 OK\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "B. Solicitudes (consumidor)",
+      "item": [
+        {
+          "name": "B1 Categoría ya disponible en Solicitudes (200 = el consumidor guardó la copia)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{solicitudesUrl}}/api/v1/solicitudes/categorias/{{categoriaId}}",
+              "host": [
+                "{{solicitudesUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "solicitudes",
+                "categorias",
+                "{{categoriaId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200: la copia local ya existe (si da 404, el evento aun no se procesa: reintenta)\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Conserva el categoriaId de origen y el eventId\", () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(String(j.categoriaId)).to.eql(String(pm.collectionVariables.get(\"categoriaId\")));",
+                  "  pm.expect(j.eventId).to.eql(pm.collectionVariables.get(\"eventId\"));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "B2 Listar categorías locales",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{solicitudesUrl}}/api/v1/solicitudes/categorias",
+              "host": [
+                "{{solicitudesUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "solicitudes",
+                "categorias"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 OK\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "B3 Crear solicitud con la categoría recibida (v1)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Usuario",
+                "value": "{{usuario}}"
+              }
+            ],
+            "url": {
+              "raw": "{{solicitudesUrl}}/api/v1/solicitudes",
+              "host": [
+                "{{solicitudesUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "solicitudes"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"titulo\": \"Sin internet en piso 3\",\n  \"descripcion\": \"No hay red desde la manana\",\n  \"categoriaId\": {{categoriaId}},\n  \"prioridad\": \"ALTA\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"201 Created\", () => pm.response.to.have.status(201));",
+                  "pm.test(\"Estado inicial CREADA\", () => pm.expect(pm.response.json().estado).to.eql(\"CREADA\"));",
+                  "pm.collectionVariables.set(\"solicitudId\", pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "B4 Crear solicitud con categoría inexistente (409)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Usuario",
+                "value": "{{usuario}}"
+              }
+            ],
+            "url": {
+              "raw": "{{solicitudesUrl}}/api/v1/solicitudes",
+              "host": [
+                "{{solicitudesUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "solicitudes"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"titulo\": \"Prueba\",\n  \"descripcion\": \"categoria que no existe\",\n  \"categoriaId\": 999999,\n  \"prioridad\": \"BAJA\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"409: categoria aun no disponible en Solicitudes\", () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "B5 Resolver sin estar EN_PROCESO (409)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{solicitudesUrl}}/api/v1/solicitudes/{{solicitudId}}/estado",
+              "host": [
+                "{{solicitudesUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "solicitudes",
+                "{{solicitudId}}",
+                "estado"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"estado\": \"RESUELTA\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"409: regla de negocio, no se puede resolver sin EN_PROCESO\", () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "B6 CREADA → ASIGNADA",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{solicitudesUrl}}/api/v1/solicitudes/{{solicitudId}}/estado",
+              "host": [
+                "{{solicitudesUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "solicitudes",
+                "{{solicitudId}}",
+                "estado"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"estado\": \"ASIGNADA\",\n  \"atencion\": \"Asignada a soporte nivel 1\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 OK\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "B7 ASIGNADA → EN_PROCESO",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{solicitudesUrl}}/api/v1/solicitudes/{{solicitudId}}/estado",
+              "host": [
+                "{{solicitudesUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "solicitudes",
+                "{{solicitudId}}",
+                "estado"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"estado\": \"EN_PROCESO\",\n  \"atencion\": \"Revisando switch del piso 3\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 OK\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "B8 EN_PROCESO → RESUELTA",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{solicitudesUrl}}/api/v1/solicitudes/{{solicitudId}}/estado",
+              "host": [
+                "{{solicitudesUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "solicitudes",
+                "{{solicitudId}}",
+                "estado"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"estado\": \"RESUELTA\",\n  \"atencion\": \"Se reemplazo el puerto defectuoso\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 OK\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "B9 RESUELTA → CERRADA",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{solicitudesUrl}}/api/v1/solicitudes/{{solicitudId}}/estado",
+              "host": [
+                "{{solicitudesUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "solicitudes",
+                "{{solicitudId}}",
+                "estado"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"estado\": \"CERRADA\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 OK\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "B10 Mis solicitudes v1",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Usuario",
+                "value": "{{usuario}}"
+              }
+            ],
+            "url": {
+              "raw": "{{solicitudesUrl}}/api/v1/solicitudes/mias",
+              "host": [
+                "{{solicitudesUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "solicitudes",
+                "mias"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 OK\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "B11 Mis solicitudes v2 (agrega categoriaNombre, atencion, fechaCreacion)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Usuario",
+                "value": "{{usuario}}"
+              }
+            ],
+            "url": {
+              "raw": "{{solicitudesUrl}}/api/v2/solicitudes/mias",
+              "host": [
+                "{{solicitudesUrl}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "solicitudes",
+                "mias"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 OK\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"v2 trae categoriaNombre\", () => { const l = pm.response.json(); pm.expect(l.length).to.be.above(0); pm.expect(l[0]).to.have.property(\"categoriaNombre\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "B12 Todas las solicitudes v1",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{solicitudesUrl}}/api/v1/solicitudes",
+              "host": [
+                "{{solicitudesUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "solicitudes"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 OK\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "C. Pruebas con detener/reiniciar (P3, P4, P5, P7)",
+      "item": [
+        {
+          "name": "C1 Crear categoría para P3/P5/P7",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{catalogoUrl}}/api/v1/catalogo/categorias",
+              "host": [
+                "{{catalogoUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "catalogo",
+                "categorias"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombre\": \"Prueba-{{$timestamp}}\",\n  \"descripcion\": \"Para pruebas de espera y fallo\",\n  \"prioridadId\": {{prioridadId}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "P3: con el consumidor DETENIDO -> debe dar 201, la categoria queda en RDS Catalogo y el mensaje en Ready=1 en la cola.\nP5: igual, con consumidor detenido; luego recrear el contenedor RabbitMQ SIN borrar el volumen.\nP7: con RabbitMQ DETENIDO -> debe dar 502 PUBLICACION_NO_CONFIRMADA (la categoria pudo quedar guardada)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"categoriaIdPrueba\", pm.response.json().id || \"\");",
+                  "console.log(\"Status \" + pm.response.code + \" - \" + pm.response.text());"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "C2 ¿Llegó la categoría de prueba a Solicitudes?",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{solicitudesUrl}}/api/v1/solicitudes/categorias/{{categoriaIdPrueba}}",
+              "host": [
+                "{{solicitudesUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "solicitudes",
+                "categorias",
+                "{{categoriaIdPrueba}}"
+              ]
+            },
+            "description": "P3: debe dar 404 mientras el consumidor esta detenido. P4/P5: debe dar 200 despues de iniciar el consumidor."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "console.log(\"Status \" + pm.response.code);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "catalogoUrl",
+      "value": "http://localhost:9081"
+    },
+    {
+      "key": "solicitudesUrl",
+      "value": "http://localhost:9082"
+    },
+    {
+      "key": "usuario",
+      "value": "ana.perez@mesatech.cl"
+    },
+    {
+      "key": "prioridadId",
+      "value": ""
+    },
+    {
+      "key": "categoriaId",
+      "value": ""
+    },
+    {
+      "key": "eventId",
+      "value": ""
+    },
+    {
+      "key": "solicitudId",
+      "value": ""
+    },
+    {
+      "key": "categoriaIdPrueba",
+      "value": ""
+    }
+  ]
+}

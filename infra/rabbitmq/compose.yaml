@@ -1,0 +1,34 @@
+# RabbitMQ de MesaTech Cloud - EC2 C (Ubuntu 24.04 LTS)
+# Uso:  cp .env.example .env  (completar)  ->  docker compose config --quiet  ->  docker compose pull  ->  docker compose up -d
+
+services:
+  rabbitmq:
+    # Imagen oficial con etiqueta explicita (incluye la interfaz de administracion). No usar "latest".
+    image: rabbitmq:3.13.7-management
+    container_name: mesatech-rabbitmq
+    # Hostname estable: RabbitMQ guarda sus datos bajo el nombre de nodo "rabbit@<hostname>".
+    # Si el hostname cambia al recrear el contenedor, el broker arranca "vacio" y pierde vhost/colas/mensajes (P5).
+    hostname: mesatech-rabbitmq
+    # Se levanta solo tras reiniciar la EC2 o si el proceso cae (salvo que se detenga manualmente).
+    restart: unless-stopped
+    ports:
+      - "5672:5672"     # AMQP: lo usan Catalogo y Solicitudes (en AWS: solo desde sus security groups)
+      - "15672:15672"   # Administracion web (en AWS: solo desde tu IP /32)
+    environment:
+      # Usuario administrador inicial (se crea solo la primera vez que se inicializa el volumen).
+      # Con esto NO existe el usuario "guest". Valores reales en .env (fuera del repositorio).
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_ADMIN_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_ADMIN_PASSWORD}
+    volumes:
+      # Volumen con nombre: conserva vhost, usuarios, colas y mensajes persistentes al recrear el contenedor.
+      # NO usar "docker compose down -v": borra el volumen.
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  rabbitmq_data:
